@@ -1,0 +1,28 @@
+services:
+  agent:
+    build: .
+    container_name: deepseek-agent
+    # Монтируем папку workspace с хоста внутрь контейнера
+    volumes:
+      - ./workspace:/app/workspace
+    # Ограничения ресурсов
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'        # максимум 50% одного ядра
+          memory: 512M       # максимум 512 МБ оперативки
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    # Ключ API передаём через .env (файл не копируется в образ)
+    env_file:
+      - .env
+    # Сеть оставляем (нужна для DeepSeek API), но ограничим позже при желании
+    networks:
+      - agent-net
+    # Никакого доступа к root
+    user: "1000:1000"
+
+networks:
+  agent-net:
+    driver: bridge
