@@ -24,7 +24,11 @@ client = OpenAI(
     base_url="https://api.deepseek.com",
 )
 
-LOG_FILE = "usage_log.csv"
+# Логи пишем в workspace, чтобы они сохранялись на хосте (в Docker)
+if os.path.exists("/app"):
+    LOG_FILE = "/app/workspace/usage_log.csv"
+else:
+    LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "workspace", "usage_log.csv")
 
 def is_peak(dt_utc: datetime) -> bool:
     if dt_utc.date().isoformat() in HOLIDAYS_CN:

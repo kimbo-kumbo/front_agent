@@ -1,7 +1,8 @@
 import csv
 from collections import defaultdict
+import os
 
-LOG_FILE = "usage_log.csv"
+LOG_FILE = os.path.join(os.path.dirname(__file__), "workspace", "usage_log.csv")
 
 def load_rows(path: str = LOG_FILE):
     with open(path, newline="", encoding="utf-8") as f:
