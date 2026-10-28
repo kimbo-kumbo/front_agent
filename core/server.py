@@ -3,6 +3,8 @@ import json
 import os
 import re
 import sys
+import shutil
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -11,7 +13,6 @@ from pydantic import BaseModel
 from typing import List
 from fastapi.staticfiles import StaticFiles
 
-# Добавляем корневую папку в sys.path, чтобы работали импорты из configs и primitives
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.client import client, log_usage
@@ -20,17 +21,26 @@ from primitives.tools import TOOLS_SCHEMA, create_folder, write_file, edit_file,
 from primitives.resources import RESOURCES_SCHEMA, read_file, list_folder
 from primitives.validators import VALIDATORS_SCHEMA, validate_html
 
+# ИМПОРТИРУЕМ ПАМЯТЬ
+from core.memory import index_file, search_knowledge
+
 class LimitUploadSize(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if request.headers.get('content-length'):
             content_length = int(request.headers.get('content-length'))
-            if content_length > 1_000_000: # 1 MB
+            if content_length > 1_000_000:
                 return JSONResponse(status_code=413, content={"detail": "Payload Too Large"})
         return await call_next(request)
 
-app = FastAPI(middleware=[Middleware(LimitUploadSize)])
+# Используем современный lifespan
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Сервер запущен. Векторная БД готова к работе.")
+    yield
+    # Выполняется при остановке (можно что-то почистить)
 
-# Объединяем инструменты и ресурсы
+app = FastAPI(middleware=[Middleware(LimitUploadSize)], lifespan=lifespan)
+
 ALL_SCHEMAS = TOOLS_SCHEMA + RESOURCES_SCHEMA + VALIDATORS_SCHEMA
 
 AVAILABLE_FUNCTIONS = {
@@ -41,6 +51,7 @@ AVAILABLE_FUNCTIONS = {
     "edit_file": edit_file, 
     "read_multiple_files": read_multiple_files,
     "validate_html": validate_html,
+    "search_knowledge_base": search_knowledge, # Добавили поиск
 }
 
 class ChatRequest(BaseModel):
@@ -54,7 +65,6 @@ class ChatRequest(BaseModel):
     thinking_enabled: bool = THINKING_ENABLED
     enable_validation: bool = True
 
-# Определяем путь к workspace
 workspace_path = "/app/workspace" if os.path.exists("/app") else "workspace"
 
 @app.get("/")
@@ -62,16 +72,11 @@ async def get_index():
     with open(os.path.join(os.path.dirname(__file__), "index.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
 
-# --- МАРШРУТЫ ДЛЯ ПРОСМОТРА ФАЙЛОВ ---
-
-# 1. Отдаем сами файлы (HTML, CSS, JS, картинки) для iframe и браузера
 if os.path.exists(workspace_path):
     app.mount("/preview", StaticFiles(directory=workspace_path), name="preview")
 
-# 2. Специальный маршрут, чтобы можно было быстро открыть файл с кодом по клику (опционально)
 @app.get("/api/files/{file_path:path}")
 async def get_file_content(file_path: str):
-    # Защита от выхода за пределы
     safe_path = os.path.realpath(os.path.join(workspace_path, file_path))
     if not safe_path.startswith(os.path.realpath(workspace_path)):
         return JSONResponse(status_code=403, content={"detail": "Access denied"})
@@ -79,10 +84,20 @@ async def get_file_content(file_path: str):
         return JSONResponse(status_code=404, content={"detail": "File not found"})
     return FileResponse(safe_path)
 
-# --- ОСНОВНОЙ ЦИКЛ ЧАТА ---
-
 @app.post("/api/chat")
 async def chat(request: ChatRequest):
+    project_name = "default"
+    for root, dirs, files in os.walk(workspace_path):
+        if "PROJECT_PLAN.md" in files:
+            project_name = os.path.basename(root)
+            break
+
+    # Обертка для поиска
+    def search_kb_wrapper(query: str):
+        return search_knowledge(project_name, query)
+    
+    AVAILABLE_FUNCTIONS["search_knowledge_base"] = search_kb_wrapper
+    
     prompt_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompts", "system_prompt.txt")
     try:
         with open(prompt_path, "r", encoding="utf-8") as f:
@@ -157,6 +172,7 @@ async def chat(request: ChatRequest):
                     elif func_name == "write_file": action_text = f"📝 Записываю файл: {func_args.get('path')}"
                     elif func_name == "read_file": action_text = f"👁️ Читаю файл: {func_args.get('path')}"
                     elif func_name == "list_folder": action_text = f"📂 Смотрю содержимое рабочей директории"
+                    elif func_name == "search_knowledge_base": action_text = f"🔎 Ищу в базе знаний: {func_args.get('query')}"
                         
                     yield f"data: [ACTION] {action_text}\n\n"
                     
@@ -164,6 +180,18 @@ async def chat(request: ChatRequest):
                     if func_to_call:
                         try:
                             result = func_to_call(**func_args)
+                            
+                            # ИНДЕКСАЦИЯ В QDRANT
+                            if func_name in ["write_file", "edit_file"]:
+                                file_path = func_args.get("path")
+                                full_path = os.path.join(workspace_path, file_path)
+                                if os.path.exists(full_path):
+                                    with open(full_path, "r", encoding="utf-8") as f:
+                                        content = f.read()
+                                    # Индексируем в коллекцию текущего проекта
+                                    index_file(project_name, file_path, content)
+                                    yield f"data: [STATUS] 🧠 Файл {file_path} проиндексирован в проект '{project_name}'.\n\n"
+                                    
                         except Exception as e:
                             result = f"Ошибка: {e}"
                     else:

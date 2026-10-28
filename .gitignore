@@ -3,5 +3,9 @@
 __pycache__/
 usage_log.csv
 *.log
-*.md
+
+# Данные векторной БД и сгенерированные проекты
+qdrant_data/
+workspace/
+
 

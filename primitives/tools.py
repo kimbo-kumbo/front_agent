@@ -1,6 +1,7 @@
 # primitives/tools.py
 import os
 from primitives.resources import get_workspace_path
+from core.memory import search_knowledge as db_search
 
 def create_folder(path: str) -> str:
     try:
@@ -64,6 +65,13 @@ def edit_file(path: str, search_text: str, replace_text: str) -> str:
     except Exception as e:
         return f"Ошибка при редактировании: {e}"
 
+def search_knowledge_base(query: str) -> str:
+    """Обертка для поиска в векторной БД."""
+    try:
+        return db_search(query)
+    except Exception as e:
+        return f"Ошибка поиска: {e}"
+
 # Схемы для LLM
 TOOLS_SCHEMA = [
     {
@@ -124,6 +132,20 @@ TOOLS_SCHEMA = [
                     "replace_text": {"type": "string", "description": "Новый текст, который встанет на место старого"}
                 },
                 "required": ["path", "search_text", "replace_text"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_knowledge_base",
+            "description": "Ищет информацию по смыслу во всех файлах проекта (векторный поиск). Используй, если не знаешь, в каком файле находится нужный код или переменная.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Вопрос или фраза для поиска (например, 'где задан цвет кнопки')"}
+                },
+                "required": ["query"]
             }
         }
     }

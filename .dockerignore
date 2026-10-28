@@ -1,0 +1,34 @@
+# Виртуальное окружение Python
+.venv/
+venv/
+env/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Секреты и конфиги
+.env
+.env.*
+
+# Git и системные файлы
+.git/
+.gitignore
+.DS_Store
+.vscode/
+
+# Тесты и временные файлы
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Твои заметки и документация (если не нужны внутри)
+Архитектура_проекта.md
+RUN.md
+README.md
+
+# Сама папка workspace (её мы монтируем через volumes)
+workspace/
+qdrant_data/
