@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.client import client, log_usage
 from configs.config import MODEL_NAME, MAX_TOKENS, THINKING_ENABLED, MAX_STEPS, MAX_TOOL_CALLS, MAX_BUDGET_USD
-from primitives.tools import TOOLS_SCHEMA, create_folder, write_file, edit_file, read_multiple_files
+from primitives.tools import TOOLS_SCHEMA, create_folder, write_file, edit_file, read_multiple_files, generate_image
 from primitives.resources import RESOURCES_SCHEMA, read_file, list_folder
 from primitives.validators import VALIDATORS_SCHEMA, validate_html
 
@@ -51,7 +51,8 @@ AVAILABLE_FUNCTIONS = {
     "edit_file": edit_file, 
     "read_multiple_files": read_multiple_files,
     "validate_html": validate_html,
-    "search_knowledge_base": search_knowledge, # Добавили поиск
+    "search_knowledge_base": search_knowledge,
+    "generate_image": generate_image,
 }
 
 class ChatRequest(BaseModel):
@@ -173,6 +174,7 @@ async def chat(request: ChatRequest):
                     elif func_name == "read_file": action_text = f"👁️ Читаю файл: {func_args.get('path')}"
                     elif func_name == "list_folder": action_text = f"📂 Смотрю содержимое рабочей директории"
                     elif func_name == "search_knowledge_base": action_text = f"🔎 Ищу в базе знаний: {func_args.get('query')}"
+                    elif func_name == "generate_image": action_text = f"🎨 Генерирую картинку: {func_args.get('prompt')[:30]}..."
                         
                     yield f"data: [ACTION] {action_text}\n\n"
                     

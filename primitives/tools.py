@@ -1,7 +1,10 @@
 # primitives/tools.py
 import os
+import re
 from primitives.resources import get_workspace_path
 from core.memory import search_knowledge as db_search
+import requests
+import base64
 
 def create_folder(path: str) -> str:
     try:
@@ -28,10 +31,16 @@ def read_multiple_files(paths: list[str]) -> str:
     result = []
     for path in paths:
         try:
+            # Защита от чтения бинарных файлов (картинок)
+            if path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif', '.ico')):
+                result.append(f"=== Файл: {path} ===\n[Это бинарный файл изображения. Его нельзя прочитать как текст. Используй этот путь напрямую в HTML.]")
+                continue
+
             full_path = get_workspace_path(path)
             if not os.path.exists(full_path):
                 result.append(f"=== Файл: {path} ===\n[Ошибка: файл не найден]")
                 continue
+                
             with open(full_path, "r", encoding="utf-8") as f:
                 content = f.read()
             result.append(f"=== Файл: {path} ===\n{content}\n{'='*30}")
@@ -71,6 +80,64 @@ def search_knowledge_base(query: str) -> str:
         return db_search(query)
     except Exception as e:
         return f"Ошибка поиска: {e}"
+
+def generate_image(prompt: str, aspect_ratio: str = "landscape") -> str:
+    """Генерирует картинку через Fal.ai с контролем размера для экономии."""
+    fal_key = os.getenv("FAL_API_KEY")
+    if not fal_key:
+        return "Ошибка: FAL_API_KEY не задан в .env"
+        
+    SIZE_MAP = {
+        "hero": {"width": 2560, "height": 1440},
+        "landscape": {"width": 1024, "height": 768},
+        "square": {"width": 768, "height": 768},
+        "portrait": {"width": 768, "height": 1024}
+    }
+    
+    size_params = SIZE_MAP.get(aspect_ratio, SIZE_MAP["landscape"])
+
+    try:
+        fal_url = "https://fal.run/fal-ai/flux/schnell"
+        headers = {
+            "Authorization": f"Key {fal_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "prompt": prompt,
+            "image_size": size_params,
+            "num_inference_steps": 4,
+            "enable_safety_checker": False,
+            "sync_mode": True  # <-- ВАЖНО: возвращает base64 вместо ссылки
+        }
+        
+        resp = requests.post(fal_url, json=payload, headers=headers, timeout=60) # Увеличил таймаут
+        resp.raise_for_status()
+        data = resp.json()
+        
+        # Получаем картинку в base64
+        b64_image = data["images"][0]["url"].split(",")[1]
+        
+        # Генерируем имя файла
+        safe_name = re.sub(r'[^a-zA-Z0-9\s]', '', prompt).strip().lower().replace(' ', '_')[:40]
+        if not safe_name:
+            safe_name = "generated_image"
+            
+        filename = f"{safe_name}.jpeg"
+        path = f"images/{filename}"
+        
+        full_path = get_workspace_path(path)
+        parent_dir = os.path.dirname(full_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+            
+        # Декодируем base64 и сохраняем
+        with open(full_path, 'wb') as f:
+            f.write(base64.b64decode(b64_image))
+            
+        return f"Успешно (Fal.ai): Картинка {size_params['width']}x{size_params['height']} сохранена в {path}. Используй этот путь в HTML/CSS."
+        
+    except Exception as e:
+        return f"Ошибка генерации через Fal.ai: {e}"
 
 # Схемы для LLM
 TOOLS_SCHEMA = [
@@ -146,6 +213,28 @@ TOOLS_SCHEMA = [
                     "query": {"type": "string", "description": "Вопрос или фраза для поиска (например, 'где задан цвет кнопки')"}
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Генерирует изображение по текстовому описанию и сохраняет его в папку images. Возвращает путь к файлу, который нужно использовать в HTML.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string", 
+                        "description": "Детальное описание картинки на английском языке. Обязательно описывай одежду, если есть люди, и стиль (photorealistic, 3d render, illustration)."
+                    },
+                    "aspect_ratio": {
+                        "type": "string", 
+                        "description": "Тип размера. 'hero' (2560x1440) - только для главных фонов на весь экран. 'landscape' (1024x768) - для обычных картинок и карточек. 'square' (768x768) - для аватарок. 'portrait' (768x1024) - для вертикальных фото.",
+                        "enum": ["hero", "landscape", "square", "portrait"]
+                    }
+                },
+                "required": ["prompt", "aspect_ratio"]
             }
         }
     }
